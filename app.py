@@ -166,7 +166,10 @@ elif page == "Документы":
     st.subheader("Маршрут визирования")
     kind = st.selectbox("Вид", ["Рабочая группа", "Приказ о вводе ИС"])
     is_it = st.checkbox("Связан с ИТ-проектом", value=True, disabled=kind != "Рабочая группа")
-    for step in core.approval_route("working_group" if kind == "Рабочая группа" else "information_system", is_it):
+    route = core.approval_route("working_group" if kind == "Рабочая группа" else "information_system", is_it)
+    if not route:
+        st.warning("Маршрут недоступен: проверьте исходный файл активной матрицы.")
+    for step in route:
         st.write(f"**{step['department']}** — {step['reason']}")
     st.caption("Другие согласующие могут требоваться по общему порядку и затронутым компетенциям.")
 

@@ -3,4 +3,7 @@ __pycache__/
 .pytest_cache/
 data/uploads/
 data/backups/
+/data/docassist.db
+/data/docassist.db-shm
+/data/docassist.db-wal
 tests/artifacts/

@@ -149,24 +149,54 @@ def seed_documents():
             with connect() as db:
                 exists = db.execute("SELECT 1 FROM documents WHERE id=?", (doc_id,)).fetchone()
             if not exists:
-                ingest(path.read_bytes(), path.name, doc_id)
+                revision_id = ingest(path.read_bytes(), path.name, doc_id)
+                # Seed files are shipped with the project; refer to that stable copy.
+                with connect() as db:
+                    db.execute("UPDATE revisions SET path=? WHERE id=?", (str(path), revision_id))
+    repair_seed_revisions()
+
+
+def repair_seed_revisions():
+    """Reconnect indexed seed revisions when a shared DB lacks uploads/."""
+    seed_by_hash = {
+        hashlib.sha256(path.read_bytes()).hexdigest(): path
+        for path in (SEED.iterdir() if SEED.exists() else [])
+        if path.suffix.lower() in (".pdf", ".docx")
+    }
+    repaired = 0
+    with connect() as db:
+        rows = db.execute("SELECT id,path,sha256 FROM revisions").fetchall()
+        for row in rows:
+            if not Path(row["path"]).is_file() and row["sha256"] in seed_by_hash:
+                db.execute("UPDATE revisions SET path=? WHERE id=?",
+                           (str(seed_by_hash[row["sha256"]]), row["id"]))
+                repaired += 1
+    return repaired
 
 
 def documents():
     with connect() as db:
-        return [dict(r) for r in db.execute("""SELECT d.id,d.title,d.active_revision,r.number,r.status,r.indexed_at
+        rows = [dict(r) for r in db.execute("""SELECT d.id,d.title,d.active_revision,r.number,r.status,r.indexed_at,r.path
             FROM documents d LEFT JOIN revisions r ON r.id=d.active_revision ORDER BY d.title""")]
+    for row in rows:
+        if row["path"] and not Path(row["path"]).is_file():
+            row["status"] = "missing_file"
+    return rows
 
 
 def revisions(document_id):
     with connect() as db:
-        return [dict(r) for r in db.execute("SELECT * FROM revisions WHERE document_id=? ORDER BY number DESC", (document_id,))]
+        rows = [dict(r) for r in db.execute("SELECT * FROM revisions WHERE document_id=? ORDER BY number DESC", (document_id,))]
+    for row in rows:
+        if not Path(row["path"]).is_file():
+            row["status"] = "missing_file"
+    return rows
 
 
 def activate(document_id, revision_id):
     with connect() as db:
-        valid = db.execute("SELECT 1 FROM revisions WHERE id=? AND document_id=? AND status='ready'", (revision_id, document_id)).fetchone()
-        if not valid:
+        valid = db.execute("SELECT path FROM revisions WHERE id=? AND document_id=? AND status='ready'", (revision_id, document_id)).fetchone()
+        if not valid or not Path(valid["path"]).is_file():
             raise ValueError("Редакция не найдена или индекс не готов")
         db.execute("UPDATE documents SET active_revision=? WHERE id=?", (revision_id, document_id))
 
@@ -190,7 +220,7 @@ def search(query: str, limit=6):
         stems.append("визир")
     fts_query = " OR ".join('"' + w.replace('"', '') + '"*' for w in stems)
     with connect() as db:
-        rows = db.execute("""SELECT f.id,f.revision_id,f.section,f.locator,f.kind,f.text,d.title,
+        rows = db.execute("""SELECT f.id,f.revision_id,f.section,f.locator,f.kind,f.text,d.title,r.path,
                    bm25(fragments_fts) AS score FROM fragments_fts
                    JOIN fragments f ON f.id=fragments_fts.rowid
                    JOIN revisions r ON r.id=f.revision_id
@@ -199,6 +229,8 @@ def search(query: str, limit=6):
     found = []
     for row in rows:
         item = dict(row)
+        if not Path(item["path"]).is_file():
+            continue
         overlap = sum(w in item["text"].casefold() for w in stems)
         if overlap:
             item["score"] = overlap / len(words)
@@ -286,6 +318,8 @@ def answer(question, history=(), client=None):
                 return {"status": "answered", "answer": "Согласно активной редакции матрицы обязательного визирования:\n" +
                         "\n".join(lines) + f"\n\nДополнительные подразделения могут потребоваться по затронутым компетенциям. [{source['id']}]",
                         "sources": [source]}
+            if source and not route:
+                return {"status": "source_missing", "answer": "Исходный файл активной редакции матрицы отсутствует. Администратору нужно повторно загрузить эту редакцию; ответ по ней сейчас недоступен.", "sources": []}
     hits = search(context_question)
     if not hits:
         return {"status": "not_found", "answer": "В загруженных документах не найдено подтверждение. Уточните вопрос или загрузите источник.", "sources": []}
@@ -331,13 +365,17 @@ def sessions():
 def approval_route(kind, is_it=False):
     """Read a selected row of the source matrix; keep conditions explicit."""
     init_db()
+    repair_seed_revisions()
     with connect() as db:
         active = db.execute("""SELECT r.path FROM documents d JOIN revisions r ON r.id=d.active_revision
             WHERE d.title LIKE 'Матрица%' ORDER BY d.title LIMIT 1""").fetchone()
     matrix = Path(active[0]) if active else next((p for p in SEED.glob("Матрица*.docx")), None)
-    if not matrix:
+    if not matrix or not matrix.is_file():
         return []
-    table = Document(matrix).tables[0]
+    try:
+        table = Document(matrix).tables[0]
+    except (OSError, IndexError, ValueError):
+        return []
     phrase = "вопросам информационных систем" if kind == "information_system" else "создании рабочих групп" if kind == "working_group" else None
     row_number = next((i for i, row in enumerate(table.rows) if phrase and phrase in row.cells[0].text.casefold()), None)
     if row_number is None:

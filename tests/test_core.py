@@ -1,5 +1,6 @@
 import io
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,35 @@ def test_route_answer_has_all_required_units(isolated):
     system = core.answer("Кто визирует приказ о вводе информационной системы?")
     for name in ("Юридическое подразделение", "Департамент ДОУ", "Департамент информационной безопасности", "Департамент информационных технологий"):
         assert name in system["answer"]
+
+
+def test_clean_clone_and_missing_seed_upload_repair(isolated, monkeypatch):
+    seed = isolated / "seed"
+    seed.mkdir()
+    original = next(core.SEED.glob("Матрица*.docx"))
+    matrix = seed / original.name
+    shutil.copy2(original, matrix)
+    monkeypatch.setattr(core, "SEED", seed)
+    core.seed_documents()
+    item = core.documents()[0]
+    revision = core.revisions(item["id"])[0]
+    assert Path(revision["path"]) == matrix
+    assert core.approval_route("working_group", True)
+    with core.connect() as db:
+        db.execute("UPDATE revisions SET path=? WHERE id=?", (str(isolated / "uploads" / "missing.docx"), revision["id"]))
+    assert core.repair_seed_revisions() == 1
+    assert Path(core.revisions(item["id"])[0]["path"]) == matrix
+
+
+def test_missing_nonseed_file_is_not_used(isolated):
+    doc = Document(); doc.add_paragraph("1.1. Личное правило контроля")
+    stream = io.BytesIO(); doc.save(stream)
+    revision = core.ingest(stream.getvalue(), "private.docx")
+    path = Path(core.revisions(core.documents()[0]["id"])[0]["path"])
+    path.unlink()
+    assert core.repair_seed_revisions() == 0
+    assert core.documents()[0]["status"] == "missing_file"
+    assert not core.search("Личное правило контроля")
 
 
 @pytest.mark.parametrize("item", templates.catalog())
