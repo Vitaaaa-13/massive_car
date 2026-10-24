@@ -3,5 +3,15 @@ services:
     build: .
     ports:
       - "8501:8501"
+    environment:
+      GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-3-Lightning}
+      DOCASSIST_ADMIN_PASSWORD_HASH: ${DOCASSIST_ADMIN_PASSWORD_HASH:-}
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
