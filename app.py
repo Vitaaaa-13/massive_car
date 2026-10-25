@@ -11,7 +11,6 @@ from docx import Document
 
 import docassist as core
 import templates
-import ui
 
 st.set_page_config(page_title="DocAssist AI", layout="wide", page_icon="📄")
 
@@ -29,7 +28,30 @@ if "theme" not in st.session_state:
     saved_theme = st.query_params.get("theme", "Системная")
     st.session_state.theme = saved_theme if saved_theme in ("Системная", "Светлая", "Тёмная") else "Системная"
 
-ui.inject_theme(st, st.session_state.theme)
+theme = st.session_state.theme
+light_css = "--background:#f4f6f9;--surface:#fff;--text:#152338;--muted:#607086;--line:#dbe2eb;"
+dark_css = "--background:#141a23;--surface:#1e2733;--text:#edf3fc;--muted:#abb9ca;--line:#39485a;"
+css = f"""<style>
+:root {{{dark_css if theme == 'Тёмная' else light_css}}}
+{':root {' + dark_css + '}' if theme == 'Системная' else ''}
+@media (prefers-color-scheme: light) {{ {':root {' + light_css + '}' if theme == 'Системная' else ''} }}
+.stApp, [data-testid="stSidebar"] {{background:var(--background);color:var(--text)}}
+[data-testid="stMainBlockContainer"] {{max-width:1050px;padding-top:2rem}}
+[data-testid="stAppViewContainer"] :is(h1,h2,h3,p,label,span,li),
+[data-testid="stSidebar"] :is(h1,h2,h3,p,label,span,li) {{color:var(--text)!important}}
+[data-testid="stForm"] {{background:var(--surface)!important;border-color:var(--line)!important}}
+[data-baseweb="input"], [data-baseweb="select"] > div, textarea,
+[data-testid="stChatInput"] {{background:var(--surface)!important;color:var(--text)!important;border-color:var(--line)!important}}
+[data-baseweb="input"] input, [data-baseweb="select"] input, textarea {{color:var(--text)!important}}
+[data-testid="stChatMessage"] {{background:var(--surface);border:1px solid var(--line);border-radius:12px}}
+[data-testid="stHeader"], [data-testid="stBottom"] {{background:var(--background)!important}}
+[data-testid="stBottom"] > div {{background:var(--background)!important}}
+.stButton button, .stDownloadButton button {{background:var(--surface)!important;color:var(--text)!important;border:1px solid var(--line)!important;border-radius:8px}}
+.stButton button *, .stDownloadButton button * {{color:var(--text)!important}}
+.stButton button[kind="primary"] {{background:#235bb4!important;color:#fff!important}}
+.stButton button[kind="primary"] * {{color:#fff!important}}
+</style>"""
+st.markdown(css, unsafe_allow_html=True)
 
 
 def is_admin():
@@ -67,36 +89,23 @@ def admin_access_panel():
 
 
 with st.sidebar:
-    ui.sidebar_brand(st)
-    page = st.radio("Раздел", ["Чат", "Документы", "Шаблоны", "Проверка черновика", "О проекте"],
-        format_func=lambda value: {"Чат": "◈  Чат", "Документы": "▤  Документы", "Шаблоны": "▣  Шаблоны",
-            "Проверка черновика": "◇  Проверка черновика", "О проекте": "ⓘ  О проекте"}[value])
+    st.title("DocAssist AI")
+    st.caption("Помощник по внутренним документам")
+    page = st.radio("Раздел", ["Чат", "Документы", "Шаблоны", "Проверка черновика", "О проекте"])
     st.selectbox("Тема", ["Системная", "Светлая", "Тёмная"], key="theme")
     if st.query_params.get("theme") != st.session_state.theme:
         st.query_params["theme"] = st.session_state.theme
 
 
 if page == "Чат":
-    history = core.messages(st.session_state.session_id)
-    ui.page_header(st, "Рабочее пространство / чат", "Спросите у документов",
-        "Точный ответ по активным редакциям с возможностью проверить источник.",
-        (f"{len(core.documents())} документов в базе", "Ответы с источниками"))
-    col1, col2, col3 = st.columns([1, 1.15, 1.8])
+    st.title("Вопросы по документам")
+    st.caption("GigaChat отвечает по найденным фрагментам активных редакций.")
+    col1, col2 = st.columns([2, 1])
     with col1:
-        if st.button("Новый диалог", use_container_width=True):
+        if st.button("Новый диалог"):
             st.session_state.session_id = core.new_session()
             st.rerun()
     with col2:
-        if history:
-            transcript = "# Диалог DocAssist AI\n\n" + "\n\n".join(
-                f"## {'Вы' if message['role'] == 'user' else 'DocAssist AI'}\n\n{message['content']}"
-                for message in history)
-            st.download_button("↓ Скачать диалог", transcript,
-                file_name=f"docassist-{st.session_state.session_id[:8]}.md", mime="text/markdown",
-                use_container_width=True)
-        else:
-            st.button("↓ Скачать диалог", disabled=True, use_container_width=True)
-    with col3:
         available = core.sessions()
         selected = st.selectbox("Диалог", [x["id"] for x in available],
             index=next((i for i, x in enumerate(available) if x["id"] == st.session_state.session_id), 0),
@@ -104,22 +113,20 @@ if page == "Чат":
         if selected != st.session_state.session_id:
             st.session_state.session_id = selected
             st.rerun()
-    ui.section_heading(st, "01", "Диалог", "История текущего разговора")
-    with st.container(border=True):
-        if not history:
-            st.markdown('<div class="empty-chat"><strong>Начните с вопроса</strong>'
-                'Спросите о документе или выберите готовый пример ниже.</div>', unsafe_allow_html=True)
-        for message in history:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-    ui.section_heading(st, "02", "Быстрый старт", "Примеры вопросов к действующим документам")
-    suggestions = ("Кто согласует рабочую группу для ИТ-проекта?",
-                   "Кто визирует приказ о вводе информационной системы?")
-    for column, item in zip(st.columns(2), suggestions):
-        with column:
-            if st.button(item, key=item, use_container_width=True):
-                st.session_state.quick_prompt = item
-                st.rerun()
+    history = core.messages(st.session_state.session_id)
+    if history:
+        transcript = "# Диалог DocAssist AI\n\n" + "\n\n".join(
+            f"## {'Вы' if message['role'] == 'user' else 'DocAssist AI'}\n\n{message['content']}"
+            for message in history)
+        st.download_button("Скачать диалог", transcript,
+            file_name=f"docassist-{st.session_state.session_id[:8]}.md", mime="text/markdown")
+    for message in history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    for item in ("Кто согласует рабочую группу для ИТ-проекта?", "Кто визирует приказ о вводе информационной системы?"):
+        if st.button(item, key=item):
+            st.session_state.quick_prompt = item
+            st.rerun()
     prompt = st.chat_input("Спросите о требованиях и документах") or st.session_state.pop("quick_prompt", None)
     if prompt:
         core.add_message(st.session_state.session_id, "user", prompt)
@@ -132,24 +139,20 @@ if page == "Чат":
     if history and history[-1]["role"] == "assistant":
         used = json.loads(history[-1]["source_ids"])
         if used:
-            ui.section_heading(st, "03", "Источники ответа", "Откройте фрагмент, чтобы проверить вывод")
+            st.subheader("Источники последнего ответа")
             with core.connect() as db:
                 rows = db.execute("""SELECT f.text,f.locator,r.number,d.title FROM fragments f
                     JOIN revisions r ON r.id=f.revision_id JOIN documents d ON d.id=r.document_id
                     WHERE f.id IN (%s) LIMIT 6""" % ",".join("?" for _ in used), used).fetchall()
-            with st.container(border=True):
-                for row in rows:
-                    with st.expander(f"{row['title']} · редакция {row['number']} · {row['locator']}"):
-                        st.write(row["text"])
+            for row in rows:
+                with st.expander(f"{row['title']} · редакция {row['number']} · {row['locator']}"):
+                    st.write(row["text"])
 
 elif page == "Документы":
-    docs = core.documents()
-    ui.page_header(st, "База знаний / документы", "Документы и редакции",
-        "Проверяйте актуальные версии и находите нужный источник.", (f"{len(docs)} документов",))
+    st.title("Документы и редакции")
     admin_access_panel()
-    ui.section_heading(st, "01", "Каталог", "Поиск по названию и состоянию редакции")
     filter_text = st.text_input("Найти документ", placeholder="Название или статус")
-    visible_docs = [item for item in docs if filter_text.casefold() in
+    visible_docs = [item for item in core.documents() if filter_text.casefold() in
                     f"{item['title']} {item['status']}".casefold()]
     if not visible_docs:
         st.info("По этому запросу документов нет")
@@ -175,7 +178,7 @@ elif page == "Документы":
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
-    ui.section_heading(st, "02", "Маршрут визирования", "Состав согласующих по активной матрице")
+    st.subheader("Маршрут визирования")
     kind = st.selectbox("Вид", ["Рабочая группа", "Приказ о вводе ИС"])
     is_it = st.checkbox("Связан с ИТ-проектом", value=True, disabled=kind != "Рабочая группа")
     route = core.approval_route("working_group" if kind == "Рабочая группа" else "information_system", is_it)
@@ -186,10 +189,8 @@ elif page == "Документы":
     st.caption("Другие согласующие могут требоваться по общему порядку и затронутым компетенциям.")
 
 elif page == "Шаблоны":
+    st.title("Оригинальные модульные документы")
     items = templates.catalog()
-    ui.page_header(st, "Работа с документами / шаблоны", "Готовые модули",
-        "Соберите черновик из исходного DOCX с сохранением структуры и подписи.",
-        (f"{len(items)} шаблонов",))
     choice = st.selectbox("Модуль", [x["id"] for x in items], format_func=lambda x: next(i["title"] for i in items if i["id"] == x))
     st.caption("Черновик создаётся из исходного DOCX. Дата, номер и блок электронной подписи сохраняются.")
     schema = templates.fields_for(choice)
@@ -223,8 +224,7 @@ elif page == "Шаблоны":
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 elif page == "Проверка черновика":
-    ui.page_header(st, "Контроль качества / черновик", "Проверка черновика",
-        "Найдём незаполненные реквизиты и служебные пояснения перед отправкой.")
+    st.title("Проверка черновика")
     uploaded = st.file_uploader("Загрузите DOCX", type=["docx"])
     if uploaded:
         draft = Document(io.BytesIO(uploaded.getvalue()))
@@ -244,8 +244,7 @@ elif page == "Проверка черновика":
         st.caption("Автоматическая проверка реквизитов; юридическую экспертизу не заменяет.")
 
 else:
-    ui.page_header(st, "DocAssist AI / о проекте", "Как устроен помощник",
-        "Ответы строятся по активным редакциям загруженных документов.")
+    st.title("О проекте")
     st.write("PDF и DOCX индексируются по фрагментам. Полнотекстовый поиск находит кандидатов, GigaChat формирует ответ по найденному контексту. Ссылки на отсутствующие фрагменты отбрасываются.")
     st.write("**Модель:**", os.getenv("GIGACHAT_MODEL", "GigaChat-3-Lightning"))
     st.write("**GigaChat:**", "ключ настроен" if os.getenv("GIGACHAT_AUTH_KEY") else "ключ не настроен")
