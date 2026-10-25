@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 
 import streamlit as st
@@ -47,6 +48,24 @@ def check_password(password):
         return False
 
 
+def admin_access_panel():
+    if is_admin():
+        st.success("Режим администратора")
+        if st.button("Выйти из режима администратора"):
+            st.session_state.admin = False
+            st.rerun()
+    else:
+        with st.expander("Управление документами"):
+            with st.form("admin_login"):
+                password = st.text_input("Пароль администратора", type="password")
+                if st.form_submit_button("Войти"):
+                    if check_password(password):
+                        st.session_state.admin = True
+                        st.rerun()
+                    else:
+                        st.error("Неверный пароль или вход не настроен")
+
+
 with st.sidebar:
     ui.sidebar_brand(st)
     page = st.radio("Раздел", ["Чат", "Документы", "Шаблоны", "Проверка черновика", "О проекте"],
@@ -55,22 +74,6 @@ with st.sidebar:
     st.selectbox("Тема", ["Системная", "Светлая", "Тёмная"], key="theme")
     if st.query_params.get("theme") != st.session_state.theme:
         st.query_params["theme"] = st.session_state.theme
-    st.divider()
-    if is_admin():
-        st.success("Администратор")
-        if st.button("Выйти"):
-            st.session_state.admin = False
-            st.rerun()
-    else:
-        with st.expander("Вход администратора"):
-            with st.form("login"):
-                password = st.text_input("Пароль", type="password")
-                if st.form_submit_button("Войти"):
-                    if check_password(password):
-                        st.session_state.admin = True
-                        st.rerun()
-                    else:
-                        st.error("Неверный пароль или вход не настроен")
 
 
 if page == "Чат":
@@ -143,6 +146,7 @@ elif page == "Документы":
     docs = core.documents()
     ui.page_header(st, "База знаний / документы", "Документы и редакции",
         "Проверяйте актуальные версии и находите нужный источник.", (f"{len(docs)} документов",))
+    admin_access_panel()
     ui.section_heading(st, "01", "Каталог", "Поиск по названию и состоянию редакции")
     filter_text = st.text_input("Найти документ", placeholder="Название или статус")
     visible_docs = [item for item in docs if filter_text.casefold() in
@@ -189,7 +193,7 @@ elif page == "Шаблоны":
     choice = st.selectbox("Модуль", [x["id"] for x in items], format_func=lambda x: next(i["title"] for i in items if i["id"] == x))
     st.caption("Черновик создаётся из исходного DOCX. Дата, номер и блок электронной подписи сохраняются.")
     schema = templates.fields_for(choice)
-    with st.form("draft"):
+    with st.form("template_form"):
         values = {}
         for key, description in schema.items():
             short_label = description.split(".", 1)[0].strip()
@@ -200,14 +204,22 @@ elif page == "Шаблоны":
             values["4_action"] = st.text_input("Действие к сроку", value="подготовить результат")
         submitted = st.form_submit_button("Создать DOCX", type="primary")
     if submitted:
+        st.session_state.pop("generated_docx", None)
+        st.session_state.pop("generated_docx_name", None)
+        st.session_state.pop("generated_template_id", None)
         try:
-            st.session_state.draft = templates.create_draft(choice, values)
-            st.session_state.draft_name = choice.replace("Модуль_", "Черновик_")
+            st.session_state.generated_docx = templates.create_draft(choice, values)
+            st.session_state.generated_docx_name = choice.replace("Модуль_", "Черновик_")
+            st.session_state.generated_template_id = choice
             st.success("Черновик создан из исходного модуля")
         except ValueError as exc:
             st.error(str(exc))
-    if st.session_state.get("draft"):
-        st.download_button("Скачать DOCX", st.session_state.draft, st.session_state.draft_name,
+        except Exception:
+            logging.exception("Failed to generate DOCX from template %s", choice)
+            st.error("Не удалось создать DOCX. Проверьте данные и попробуйте ещё раз.")
+    if st.session_state.get("generated_docx") and st.session_state.get("generated_template_id") == choice:
+        st.download_button("Скачать DOCX", st.session_state.generated_docx,
+            st.session_state.generated_docx_name,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 elif page == "Проверка черновика":

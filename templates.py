@@ -41,7 +41,10 @@ def template_path(template_id):
 
 
 def fields_for(template_id):
-    return next(item["notes"] for item in catalog() if item["id"] == template_id)
+    notes = next((item["notes"] for item in catalog() if item["id"] == template_id), None)
+    if notes is None:
+        raise ValueError("Модуль не найден")
+    return notes
 
 
 def validate(template_id, values):
@@ -89,7 +92,9 @@ def _remove_paragraph(paragraph):
 def create_draft(template_id, values, allow_incomplete=False):
     missing = validate(template_id, values)
     if missing and not allow_incomplete:
-        raise ValueError("Не заполнены поля: " + ", ".join(missing))
+        notes = fields_for(template_id)
+        labels = [f"{key}. {notes[key].split('.', 1)[0].strip()}" for key in missing]
+        raise ValueError("Заполните обязательные поля: " + "; ".join(labels))
     document = Document(template_path(template_id))
     note_start = next((i for i, p in enumerate(document.paragraphs)
                        if p.text.strip().startswith("Примечания по заполнению")), len(document.paragraphs))
