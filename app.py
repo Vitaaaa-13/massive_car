@@ -123,11 +123,7 @@ if page == "Чат":
     for message in history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-    for item in ("Кто согласует рабочую группу для ИТ-проекта?", "Кто визирует приказ о вводе информационной системы?"):
-        if st.button(item, key=item):
-            st.session_state.quick_prompt = item
-            st.rerun()
-    prompt = st.chat_input("Спросите о требованиях и документах") or st.session_state.pop("quick_prompt", None)
+    prompt = st.chat_input("Спросите о требованиях и документах")
     if prompt:
         core.add_message(st.session_state.session_id, "user", prompt)
         with st.spinner("Ищу источники и формирую ответ..."):
